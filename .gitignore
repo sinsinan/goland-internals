@@ -1,1 +1,4 @@
 .idea
+golang-plugin/*/plugins/*.so
+golang-plugin/*/plugins/*.dll
+golang-plugin/*/plugins/*.h

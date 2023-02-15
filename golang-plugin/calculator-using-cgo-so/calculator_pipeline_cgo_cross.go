@@ -1,6 +1,7 @@
 package main
 
 /*
+#include <stdlib.h>
 #if defined(_WIN32) || defined(_WIN64) || (defined(__CYGWIN__) && !defined(_WIN32))
 #include <windows.h>
 /////////////////////////////////////
@@ -20,17 +21,8 @@ void* getFuncPointer( HMODULE hmodule,char* str) {
 	return GetProcAddress(hmodule,(str));
 }
 
-#define LOAD_DLL(hmodule,str) \
- ( ( hmodule = LoadLibrary((str)) ) != INVALID_HANDLE_VALUE )
-#define GET_FUNC_PTR(hmodule,str) \
- (GetProcAddress(hmodule,(str)))
-
- #define UNLOAD_DLL(hmodule) FreeLibrary(hmodule);
 #else
 #include <dlfcn.h> // for GNU Linux and MAC OS X
-#define CALL_CONV_FOR_QSORT
-#define EXPORTED_FUNC
-#define STDCALL_CONV
 /////////////////////////////////////
 // UNIX Function for Loading a DLL
 // dlopen
@@ -39,18 +31,17 @@ void* getFuncPointer( HMODULE hmodule,char* str) {
 // UNIX Function for Unloading the DLL
 // dlclose
 //
+
+
 void* loadDLL(char* str) {
-	return dlopen((str),RTLD_LAZY) );
+	return dlopen((str),RTLD_LAZY);
 }
 
-void* getFuncPointer( void* hmodule,char* str) {
+typedef void (*funcptr)(void);
+
+funcptr getFuncPointer( void* hmodule,char* str) {
 	return dlsym(hmodule,(str));
 }
-
-#define LOAD_DLL(hmodule,str) \
-( ( hmodule = dlopen((str),RTLD_LAZY) ) != 0 )
-#define GET_FUNC_PTR(hmodule,str) dlsym(hmodule,(str));
-#define UNLOAD_DLL(hmodule) dlclose(hmodule);
 #endif
 ///////////////////////////////////
 
@@ -73,7 +64,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -113,7 +103,7 @@ func populateOpFuncMap(m *map[string]func(float64, float64) float64) {
 			fmt.Println(err)
 			return err
 		}
-		if strings.HasSuffix(path, ".dll") {
+		if strings.HasSuffix(path, ".dll") || strings.HasSuffix(path, ".so") {
 			soFilePaths = append(soFilePaths, path)
 		}
 		return nil
@@ -126,8 +116,7 @@ func populateOpFuncMap(m *map[string]func(float64, float64) float64) {
 func add(path string, m *map[string]func(float64, float64) float64) {
 	pathCString := C.CString(path)
 	defer C.free(unsafe.Pointer(pathCString))
-	handle :=  C.loadDLL(pathCString)
-	//defer C.free(unsafe.Pointer(handle))
+	handle := C.loadDLL(pathCString)
 	if handle == nil {
 		err := fmt.Errorf("error opening %s", path)
 		panic(err)
@@ -141,12 +130,7 @@ func add(path string, m *map[string]func(float64, float64) float64) {
 
 	keyPtrCString := C.CString("Operator")
 	defer C.free(unsafe.Pointer(keyPtrCString))
-	keyPtr := func () unsafe.Pointer {
-		if runtime.GOOS == "windows" {
-			return unsafe.Pointer(C.getFuncPointer(handle, keyPtrCString))
-		}
-		return C.getFuncPointer(handle, keyPtrCString)
-	}()
+	keyPtr := unsafe.Pointer(C.getFuncPointer(handle, keyPtrCString))
 
 	if keyPtr == nil {
 		err := fmt.Sprintf("No Operator for so: %s", path)
@@ -157,22 +141,17 @@ func add(path string, m *map[string]func(float64, float64) float64) {
 
 	valuePtrCString := C.CString("Operate")
 	defer C.free(unsafe.Pointer(valuePtrCString))
-	valuePtr := C.GetProcAddress(handle, valuePtrCString)
+	valuePtr := unsafe.Pointer(C.getFuncPointer(handle, valuePtrCString))
 
-	// if valuePtr == nil {
-	// 	err := fmt.Sprintf("No Operate for so: %s", path)
-	// 	panic(err)
-	// }
-
-	// key := C.Operator(unsafe.Pointer(keyPtr))
-	// // defer C.free(unsafe.Pointer(key))
+	if valuePtr == nil {
+		err := fmt.Sprintf("No Operate for so: %s", path)
+		panic(err)
+	}
 
 	(*m)[C.GoString(C.Operator(keyPtr))] = func(f1 float64, f2 float64) float64 {
-		return float64(C.Operate(unsafe.Pointer(valuePtr), C.double(f1), C.double(f2)))
+		return float64(C.Operate(valuePtr, C.double(f1), C.double(f2)))
 	}
 }
-
-
 
 func parseExp(s string) (float64, string, float64, error) {
 	println(s)
